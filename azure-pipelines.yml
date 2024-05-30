@@ -37,6 +37,8 @@ steps:
       terraform plan
       terraform apply -auto-approve
       sleep 2m
+      python tgflipover.py
+      sleep 3m
       terraform destroy -auto-approve
       sleep 1m
       echo "Hello there, You've successfully executed the Job. Congrats!!!"
