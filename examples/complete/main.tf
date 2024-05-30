@@ -4,22 +4,26 @@ provider "aws" {
 
 data "aws_availability_zones" "available" {}
 
-locals {
-  name   = basename(path.cwd)
-  region = "eu-west-1"
+variable "asg_names" {
+  type    = list(string)
+  default = ["green", "blue"]
+}
 
-  vpc_cidr = "10.0.0.0/16"
-  azs      = slice(data.aws_availability_zones.available.names, 0, 3)
+locals {
+  region = "us-east-1"
+
+  vpc_cidr = "172.31.0.0/16"
+  azs      = slice(data.aws_availability_zones.available.names, 0, 2)
 
   tags = {
-    Example    = local.name
+    Example    = "blue-green"
     GithubRepo = "terraform-aws-autoscaling"
     GithubOrg  = "terraform-aws-modules"
   }
 
   user_data = <<-EOT
     #!/bin/bash
-    echo "Hello Terraform!"
+    echo "Hello There!, Welcome to Green Environment"
   EOT
 }
 
@@ -29,22 +33,22 @@ locals {
 
 module "complete" {
   source = "../../"
-
+  for_each                 = toset(var.asg_names)
   # Autoscaling group
-  name            = "complete-${local.name}"
+  name            = each.value
   use_name_prefix = false
-  instance_name   = "my-instance-name"
+  instance_name   = each.value
 
   ignore_desired_capacity_changes = true
 
   min_size                  = 0
-  max_size                  = 1
+  max_size                  = 2
   desired_capacity          = 1
   wait_for_capacity_timeout = 0
   default_instance_warmup   = 300
   health_check_type         = "EC2"
   vpc_zone_identifier       = module.vpc.private_subnets
-  service_linked_role_arn   = aws_iam_service_linked_role.autoscaling.arn
+  service_linked_role_arn   = aws_iam_service_linked_role.autoscaling[each.value].arn
 
   # Traffic source attachment
   create_traffic_source_attachment = true
@@ -92,7 +96,7 @@ module "complete" {
   }
 
   # Launch template
-  launch_template_name        = "complete-${local.name}"
+  launch_template_name        = each.value
   launch_template_description = "Complete launch template example"
   update_default_version      = true
 
@@ -103,7 +107,7 @@ module "complete" {
   enable_monitoring = true
 
   create_iam_instance_profile = true
-  iam_role_name               = "complete-${local.name}"
+  iam_role_name               = each.value
   iam_role_path               = "/ec2/"
   iam_role_description        = "Complete IAM role example"
   iam_role_tags = {
@@ -124,7 +128,7 @@ module "complete" {
       ebs = {
         delete_on_termination = true
         encrypted             = true
-        volume_size           = 20
+        volume_size           = 10
         volume_type           = "gp2"
       }
       }, {
@@ -133,7 +137,7 @@ module "complete" {
       ebs = {
         delete_on_termination = true
         encrypted             = true
-        volume_size           = 30
+        volume_size           = 10
         volume_type           = "gp2"
       }
     }
@@ -303,510 +307,6 @@ module "complete" {
   }
 }
 
-################################################################################
-# Mixed instance policy
-################################################################################
-
-module "mixed_instance" {
-  source = "../../"
-
-  # Autoscaling group
-  name = "mixed-instance-${local.name}"
-
-  vpc_zone_identifier = module.vpc.private_subnets
-  min_size            = 0
-  max_size            = 5
-  desired_capacity    = 4
-
-  image_id           = data.aws_ami.amazon_linux.id
-  instance_type      = "t3.micro"
-  capacity_rebalance = true
-
-  iam_instance_profile_arn = aws_iam_instance_profile.ssm.arn
-
-  initial_lifecycle_hooks = [
-    {
-      name                 = "ExampleStartupLifeCycleHook"
-      default_result       = "CONTINUE"
-      heartbeat_timeout    = 60
-      lifecycle_transition = "autoscaling:EC2_INSTANCE_LAUNCHING"
-      # This could be a rendered data resource
-      notification_metadata = jsonencode({ "hello" = "world" })
-    },
-    {
-      name                 = "ExampleTerminationLifeCycleHook"
-      default_result       = "CONTINUE"
-      heartbeat_timeout    = 180
-      lifecycle_transition = "autoscaling:EC2_INSTANCE_TERMINATING"
-      # This could be a rendered data resource
-      notification_metadata = jsonencode({ "goodbye" = "world" })
-    }
-  ]
-
-  instance_refresh = {
-    strategy = "Rolling"
-    preferences = {
-      checkpoint_delay       = 600
-      checkpoint_percentages = [35, 70, 100]
-      instance_warmup        = 300
-      min_healthy_percentage = 50
-      max_healthy_percentage = 100
-      skip_matching          = true
-    }
-    triggers = ["tag"]
-  }
-
-  # Mixed instances
-  use_mixed_instances_policy = true
-  mixed_instances_policy = {
-    instances_distribution = {
-      on_demand_base_capacity                  = 0
-      on_demand_percentage_above_base_capacity = 10
-      spot_allocation_strategy                 = "capacity-optimized"
-    }
-
-    override = [
-      {
-        instance_type     = "t3.nano"
-        weighted_capacity = "2"
-      },
-      {
-        instance_type     = "t3.medium"
-        weighted_capacity = "1"
-      },
-    ]
-  }
-
-  tags = local.tags
-}
-
-################################################################################
-# With warm pool
-################################################################################
-
-module "warm_pool" {
-  source = "../../"
-
-  # Autoscaling group
-  name = "warm-pool-${local.name}"
-
-  vpc_zone_identifier = module.vpc.private_subnets
-  min_size            = 0
-  max_size            = 1
-  desired_capacity    = 1
-
-  image_id      = data.aws_ami.amazon_linux.id
-  instance_type = "t3.micro"
-
-  warm_pool = {
-    pool_state                  = "Stopped"
-    min_size                    = 1
-    max_group_prepared_capacity = 2
-
-    instance_reuse_policy = {
-      reuse_on_scale_in = true
-    }
-  }
-
-  capacity_reservation_specification = {
-    capacity_reservation_target = {
-      capacity_reservation_id = aws_ec2_capacity_reservation.targeted.id
-    }
-  }
-
-  tags = local.tags
-}
-
-################################################################################
-# EFA Network Interface
-# !Warning - This example requires the use of expensive instance types - Warning!
-################################################################################
-
-locals {
-  efa_user_data = <<-EOT
-    # Install EFA libraries
-    curl -O https://efa-installer.amazonaws.com/aws-efa-installer-latest.tar.gz
-    tar -xf aws-efa-installer-latest.tar.gz && cd aws-efa-installer
-    ./efa_installer.sh -y --minimal
-    fi_info -p efa -t FI_EP_RDM
-    # Disable ptrace
-    sysctl -w kernel.yama.ptrace_scope=0
-  EOT
-}
-
-module "efa" {
-  source = "../../"
-
-  # Autoscaling group
-  name = "default-${local.name}"
-
-  vpc_zone_identifier = module.vpc.private_subnets
-  min_size            = 0
-  max_size            = 1
-  desired_capacity    = 1
-
-  # aws ec2 describe-instance-types --region eu-west-1 --filters Name=network-info.efa-supported,Values=true --query "InstanceTypes[*].[InstanceType]" --output text | sort
-  instance_type = "c5n.9xlarge"
-  image_id      = data.aws_ami.amazon_linux.id
-  user_data     = base64encode(local.efa_user_data)
-
-  network_interfaces = [
-    {
-      description                 = "EFA interface example"
-      delete_on_termination       = true
-      device_index                = 0
-      associate_public_ip_address = false
-      interface_type              = "efa"
-    }
-  ]
-
-  tags = local.tags
-}
-
-################################################################################
-# Instance Requirements
-################################################################################
-
-module "instance_requirements" {
-  source = "../../"
-
-  # Autoscaling group
-  name = "instance-req-${local.name}"
-
-  vpc_zone_identifier   = module.vpc.private_subnets
-  min_size              = 0
-  max_size              = 5
-  desired_capacity      = 1
-  desired_capacity_type = "vcpu"
-
-  update_default_version = true
-  image_id               = data.aws_ami.amazon_linux.id
-
-  use_mixed_instances_policy = true
-  mixed_instances_policy = {
-    override = [
-      {
-        instance_requirements = {
-          cpu_manufacturers   = ["amd"]
-          local_storage_types = ["ssd"]
-          memory_gib_per_vcpu = {
-            min = 2
-            max = 4
-          }
-          memory_mib = {
-            min = 2048
-          },
-          vcpu_count = {
-            min = 2
-            max = 4
-          }
-        }
-      }
-    ]
-  }
-  instance_requirements = {
-
-    accelerator_manufacturers = []
-    accelerator_names         = []
-    accelerator_types         = []
-    # If you specify allowed_instance_types, you can't specify excluded_instance_types
-    # allowed_instance_types = ["m*"]
-
-    baseline_ebs_bandwidth_mbps = {
-      min = 400
-      max = 1600
-    }
-
-    burstable_performance = "excluded"
-    cpu_manufacturers     = ["amazon-web-services", "amd", "intel"]
-    # If you specify excluded_instance_types, you can't specify allowed_instance_types
-    excluded_instance_types = ["t*"]
-    instance_generations    = ["current"]
-    local_storage_types     = ["ssd", "hdd"]
-
-    memory_gib_per_vcpu = {
-      min = 4
-      max = 16
-    }
-
-    memory_mib = {
-      min = 24
-      max = 128
-    }
-
-    network_interface_count = {
-      min = 1
-      max = 16
-    }
-
-    vcpu_count = {
-      min = 2
-      max = 96
-    }
-  }
-
-  tags = local.tags
-}
-
-################################################################################
-# Instance Requirements - Accelerators
-################################################################################
-
-module "instance_requirements_accelerators" {
-  source = "../../"
-
-  # Requires access to g or p instance types in your account http://aws.amazon.com/contact-us/ec2-request
-  create = false
-
-  # Autoscaling group
-  name = "instance-req-accelerators-${local.name}"
-
-  vpc_zone_identifier   = module.vpc.private_subnets
-  min_size              = 0
-  max_size              = 5
-  desired_capacity      = 1
-  desired_capacity_type = "units"
-
-  update_default_version = true
-  image_id               = data.aws_ami.amazon_linux.id
-
-  use_mixed_instances_policy = true
-  mixed_instances_policy = {
-    override = [
-      {
-        instance_requirements = {
-          memory_gib_per_vcpu = {
-            min = 4
-            max = 16
-          }
-          memory_mib = {
-            min = 16
-          },
-          vcpu_count = {
-            min = 4
-            max = 64
-          }
-        }
-      }
-    ]
-  }
-  instance_requirements = {
-    accelerator_count = {
-      min = 1
-      max = 8
-    }
-
-    accelerator_manufacturers = ["amazon-web-services", "amd", "nvidia"]
-    accelerator_names         = ["a100", "v100", "k80", "t4", "m60", "radeon-pro-v520"]
-
-    accelerator_total_memory_mib = {
-      min = 4096
-      max = 16384
-    }
-
-    accelerator_types = ["gpu", "inference"]
-    bare_metal        = "excluded"
-
-    baseline_ebs_bandwidth_mbps = {
-      min = 400
-      max = 16384
-    }
-
-    burstable_performance   = "excluded"
-    cpu_manufacturers       = ["amazon-web-services", "amd", "intel"]
-    excluded_instance_types = ["t*"]
-    instance_generations    = ["current"]
-    local_storage_types     = ["ssd", "hdd"]
-
-    memory_gib_per_vcpu = {
-      min = 4
-      max = 16
-    }
-
-    memory_mib = {
-      min = 24
-      max = 99999 # seems to be a provider bug
-    }
-
-    network_interface_count = {
-      min = 1
-      max = 4
-    }
-
-    vcpu_count = {
-      min = 2
-      max = 999 # seems to be a provider bug
-    }
-  }
-
-  tags = local.tags
-}
-
-################################################################################
-# Target Tracking Customized Metrics Policy
-################################################################################
-
-module "target_tracking_customized_metrics" {
-  source = "../../"
-
-  # Autoscaling group
-  name = "customized-metrics-${local.name}"
-
-  vpc_zone_identifier = module.vpc.private_subnets
-  min_size            = 0
-  max_size            = 1
-  desired_capacity    = 1
-
-  image_id      = data.aws_ami.amazon_linux.id
-  instance_type = "t3.micro"
-
-  scaling_policies = {
-    metric_math = {
-      policy_type               = "TargetTrackingScaling"
-      estimated_instance_warmup = 120
-      target_tracking_configuration = {
-        customized_metric_specification = {
-          # https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-target-tracking-metric-math.html
-          metrics = [
-            {
-              label = "Get the queue size (the number of messages waiting to be processed)"
-              id    = "m1"
-              metric_stat = {
-                metric = {
-                  namespace   = "AWS/SQS"
-                  metric_name = "ApproximateNumberOfMessagesVisible"
-                  dimensions = [
-                    {
-                      name  = aws_sqs_queue.this.name
-                      value = "my-queue"
-                    }
-                  ]
-                }
-                stat = "Sum"
-              }
-              return_data = false
-            },
-            {
-              label = "Get the group size (the number of InService instances)"
-              id    = "m2"
-              metric_stat = {
-                metric = {
-                  namespace   = "AWS/AutoScaling"
-                  metric_name = "GroupInServiceInstances"
-                  dimensions = [
-                    {
-                      name  = "customized-metrics-${local.name}"
-                      value = "my-asg"
-                    }
-                  ]
-                }
-                stat = "Average"
-              }
-              return_data = true
-            },
-            {
-              label       = "Calculate the backlog per instance"
-              id          = "e1"
-              expression  = "m1 / m2"
-              return_data = false
-            }
-          ]
-        }
-        target_value = 100
-      }
-    }
-  }
-
-  tags = local.tags
-}
-
-################################################################################
-# External
-################################################################################
-
-resource "aws_launch_template" "this" {
-  name_prefix   = "external-lt-${local.name}-"
-  image_id      = data.aws_ami.amazon_linux.id
-  instance_type = "t3.micro"
-
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
-module "external" {
-  source = "../../"
-
-  # Autoscaling group
-  name = "external-${local.name}"
-
-  vpc_zone_identifier = module.vpc.private_subnets
-  min_size            = 0
-  max_size            = 1
-  desired_capacity    = 1
-
-  # Launch template
-  create_launch_template = false
-  launch_template_id     = aws_launch_template.this.id
-
-  tags = local.tags
-}
-
-################################################################################
-# Disabled
-################################################################################
-
-module "disabled" {
-  source = "../../"
-
-  create                 = false
-  create_launch_template = false
-
-  # Autoscaling group
-  name = "disabled-${local.name}"
-}
-
-################################################################################
-# Launch template only
-################################################################################
-
-module "launch_template_only" {
-  source = "../../"
-
-  create = false
-  name   = "launch-template-only-${local.name}"
-
-  vpc_zone_identifier = module.vpc.private_subnets
-  min_size            = 0
-  max_size            = 1
-  desired_capacity    = 1
-
-  image_id      = data.aws_ami.amazon_linux.id
-  instance_type = "t3.micro"
-
-  tags = local.tags
-}
-
-################################################################################
-# Default
-################################################################################
-
-module "default" {
-  source = "../../"
-
-  # Autoscaling group
-  name = "default-${local.name}"
-
-  vpc_zone_identifier = module.vpc.private_subnets
-  min_size            = 0
-  max_size            = 1
-  desired_capacity    = 1
-
-  image_id      = data.aws_ami.amazon_linux.id
-  instance_type = "t3.micro"
-
-  tags = local.tags
-}
 
 ################################################################################
 # Supporting Resources
@@ -816,7 +316,7 @@ module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "~> 5.0"
 
-  name = local.name
+  name = "sample-vpc"
   cidr = local.vpc_cidr
 
   azs             = local.azs
@@ -830,7 +330,7 @@ module "asg_sg" {
   source  = "terraform-aws-modules/security-group/aws"
   version = "~> 5.0"
 
-  name        = local.name
+  name        = "asg-sg"
   description = "A security group"
   vpc_id      = module.vpc.vpc_id
 
@@ -861,9 +361,10 @@ data "aws_ami" "amazon_linux" {
 }
 
 resource "aws_iam_service_linked_role" "autoscaling" {
+  for_each                 = toset(var.asg_names)
   aws_service_name = "autoscaling.amazonaws.com"
   description      = "A service linked role for autoscaling"
-  custom_suffix    = local.name
+  custom_suffix    = each.value
 
   # Sometimes good sleep is required to have some IAM resources created before they can be used
   provisioner "local-exec" {
@@ -872,13 +373,15 @@ resource "aws_iam_service_linked_role" "autoscaling" {
 }
 
 resource "aws_iam_instance_profile" "ssm" {
-  name = "complete-${local.name}"
-  role = aws_iam_role.ssm.name
+  for_each                 = toset(var.asg_names)
+  name = each.value
+  role = aws_iam_role.ssm[each.value].name
   tags = local.tags
 }
 
 resource "aws_iam_role" "ssm" {
-  name = "complete-${local.name}"
+  for_each                 = toset(var.asg_names)
+  name = each.value
   tags = local.tags
 
   assume_role_policy = jsonencode({
@@ -900,7 +403,7 @@ module "alb" {
   source  = "terraform-aws-modules/alb/aws"
   version = "~> 9.0"
 
-  name = local.name
+  name = "Sample-ALB"
 
   vpc_id  = module.vpc.vpc_id
   subnets = module.vpc.public_subnets
@@ -911,9 +414,9 @@ module "alb" {
   # Security Group
   security_group_ingress_rules = {
     all_http = {
-      from_port   = 80
-      to_port     = 80
-      ip_protocol = "tcp"
+      from_port   = 0
+      to_port     = 0
+      ip_protocol = "-1"
       cidr_ipv4   = "0.0.0.0/0"
     }
   }
@@ -961,25 +464,8 @@ resource "aws_ec2_capacity_reservation" "targeted" {
 }
 
 resource "aws_sqs_queue" "this" {
-  name = local.name
+  for_each                 = toset(var.asg_names)
+  name = each.value
 
   tags = local.tags
-}
-
-module "step_scaling_alarm" {
-  source  = "terraform-aws-modules/cloudwatch/aws//modules/metric-alarm"
-  version = "~> 4.3"
-
-  alarm_name          = "${local.name}-step-scaling"
-  alarm_description   = "Step Scaling Alarm Example"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  threshold           = 40
-  period              = 300
-
-  namespace   = "AWS/EC2"
-  metric_name = "CPUUtilization"
-  statistic   = "Average"
-
-  alarm_actions = [module.complete.autoscaling_policy_arns["scale-out"]]
 }
