@@ -36,6 +36,6 @@ steps:
       sleep 1m
       echo "Hello there, You've successfully executed the Job. Congrats!!!"
     disableAutoCwd: true
-    workingDirectory: 'autoscaling-elb/examples/complete'
+    workingDirectory: 'examples/complete/'
 
 
