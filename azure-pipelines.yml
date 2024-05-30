@@ -42,6 +42,7 @@ steps:
       terraform destroy -auto-approve
       sleep 1m
       echo "Hello there, You've successfully executed the Job. Congrats!!!"
-    disableAutoCwd: true  
+    disableAutoCwd: true
+    workingDirectory: 'autoscaling-elb/examples/complete' 
 
 
