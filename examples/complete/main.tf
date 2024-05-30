@@ -24,6 +24,12 @@ locals {
   user_data = <<-EOT
     #!/bin/bash
     echo "Hello There!, Welcome to Green Environment"
+    sudo yum update -y
+    sudo yum install -y yum-utils
+    sudo yum-config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
+    sudo yum install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    sudo systemctl start docker
+    docker container run --name app -p 8080:8080 public.ecr.aws/u8w9f9i8/sample-app-updated
   EOT
 }
 
