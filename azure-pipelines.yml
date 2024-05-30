@@ -9,7 +9,7 @@ trigger:
     - master
   paths:
     include:
-    - examples/complete/*
+    - examples/complete
 
 pool:
   vmImage: ubuntu-latest
@@ -41,7 +41,7 @@ steps:
       sleep 1m
       echo "Hello there, You've successfully executed the Job. Congrats!!!"
     disableAutoCwd: true
-    workingDirectory: 'autoscaling-elb/examples/complete/' 
+    workingDirectory: 'examples/complete/' 
 
 
 
