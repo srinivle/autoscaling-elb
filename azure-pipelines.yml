@@ -4,7 +4,12 @@
 # https://aka.ms/yaml
 
 trigger:
-- master
+  branches:
+    include:
+    - master
+  paths:
+    include:
+    - examples/complete
 
 pool:
   vmImage: ubuntu-latest
@@ -35,7 +40,6 @@ steps:
       terraform destroy -auto-approve
       sleep 1m
       echo "Hello there, You've successfully executed the Job. Congrats!!!"
-    disableAutoCwd: true
-    workingDirectory: 'examples/complete/'
+    disableAutoCwd: true  
 
 
