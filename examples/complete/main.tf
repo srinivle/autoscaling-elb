@@ -192,13 +192,21 @@ module "complete" {
     instance_metadata_tags      = "enabled"
   }
 
-  network_interfaces = {
+  network_interfaces = [
+    {
       delete_on_termination = true
       description           = "eth0"
       device_index          = 0
       security_groups       = [module.asg_sg.security_group_id]
       associate_public_ip_address = true
+    },
+    {
+      delete_on_termination = true
+      description           = "eth1"
+      device_index          = 1
+      security_groups       = [module.asg_sg.security_group_id]
     }
+  ]
 
   placement = {
     availability_zone = "${local.region}b"
