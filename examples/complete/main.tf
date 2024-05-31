@@ -193,7 +193,6 @@ module "complete" {
   }
 
   network_interfaces = [
-    {associate_public_ip_address = true},
     {
       delete_on_termination = true
       description           = "eth0"
