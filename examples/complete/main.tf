@@ -205,6 +205,7 @@ module "complete" {
       description           = "eth1"
       device_index          = 1
       security_groups       = [module.asg_sg.security_group_id]
+      associate_public_ip_address = true
     }
   ]
 
